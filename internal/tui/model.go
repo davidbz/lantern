@@ -1,4 +1,4 @@
-// Package tui renders the device inventory as an interactive terminal table.
+// Package tui renders the device inventory as an animated, arcade-style terminal table.
 package tui
 
 import (
@@ -36,6 +36,11 @@ type TickMsg struct {
 	Generation int
 }
 
+// FrameMsg advances the animations: blinking text, the scanning bar and the scrolling gradients.
+type FrameMsg struct {
+	Time time.Time
+}
+
 // Model is the UI state; Update is a reducer from (state, message) to (state, command).
 type Model struct {
 	scan    ScanFunc
@@ -53,10 +58,16 @@ type Model struct {
 	width      int
 	height     int
 
+	// Presentation only: none of these affect scanning.
+	frame    int       // animation frame counter
+	now      time.Time // time of the last frame, for the countdown
+	hiScore  int       // most devices seen at once
+	prevScan time.Time // when the scan before the last one finished; later arrivals are marked new
+
 	table table.Model
 }
 
-func NewModel(_ context.Context, scan ScanFunc, cfg *config.UIConfig) Model {
+func NewModel(ctx context.Context, scan ScanFunc, cfg *config.UIConfig) Model {
 	return Model{
 		scan:       scan,
 		refresh:    cfg.RefreshInterval,
@@ -71,12 +82,16 @@ func NewModel(_ context.Context, scan ScanFunc, cfg *config.UIConfig) Model {
 		details:    false,
 		width:      0,
 		height:     0,
-		table:      newTable(),
+		frame:      0,
+		now:        time.Time{},
+		hiScore:    0,
+		prevScan:   time.Time{},
+		table:      newTable(ctx),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.scan(m.inventory)
+	return tea.Batch(m.scan(m.inventory), nextFrame())
 }
 
 //nolint:ireturn // tea.Model requires Update to return the tea.Model interface.
@@ -92,6 +107,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.startScan()
+	case FrameMsg:
+		m.frame++
+		m.now = msg.Time
+		return m, nextFrame()
 	case tea.WindowSizeMsg:
 		return m.onResize(ctx, msg), nil
 	case tea.KeyMsg:
@@ -119,6 +138,7 @@ func (m Model) startScan() (Model, tea.Cmd) {
 func (m Model) onScanDone(ctx context.Context, msg ScanDoneMsg) (Model, tea.Cmd) {
 	m.scanning = false
 	m.generation++
+	m.prevScan = m.lastScan
 	m.lastScan = time.Now()
 	m.err = msg.Err
 	next := tea.Tick(m.refresh, func(time.Time) tea.Msg { return TickMsg{Generation: m.generation} })
@@ -129,7 +149,10 @@ func (m Model) onScanDone(ctx context.Context, msg ScanDoneMsg) (Model, tea.Cmd)
 		m.warnings = msg.Result.Warnings
 	}
 
-	return m.withDevices(ctx), next
+	m = m.withDevices(ctx)
+	m.hiScore = max(m.hiScore, len(m.devices))
+
+	return m, next
 }
 
 func (m Model) onKey(ctx context.Context, msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -158,16 +181,16 @@ func (m Model) onKey(ctx context.Context, msg tea.KeyMsg) (Model, tea.Cmd) {
 func (m Model) onResize(ctx context.Context, msg tea.WindowSizeMsg) Model {
 	m.width = msg.Width
 	m.height = msg.Height
-	m.table.SetColumns(columns(msg.Width))
 
 	return m.withDevices(ctx)
 }
 
 // withDevices re-sorts the inventory and refreshes the table, keeping the cursor in range and the table
-// sized to the space the banners leave.
+// sized to the space the header, banners and footer leave.
 func (m Model) withDevices(ctx context.Context) Model {
 	m.devices = domain.SortedDevices(ctx, m.inventory, m.sortKey)
-	m.table.SetRows(rows(ctx, m.devices))
+	m.table.SetColumns(columns(ctx, m.width, m.sortKey))
+	m.table.SetRows(rows(ctx, m.devices, m.prevScan))
 	m.table.SetHeight(max(m.height-chromeHeight(m), minTableHeight))
 	// An empty table parks its cursor at -1; bring it back once there are rows.
 	if len(m.devices) > 0 {
@@ -175,6 +198,10 @@ func (m Model) withDevices(ctx context.Context) Model {
 	}
 
 	return m
+}
+
+func nextFrame() tea.Cmd {
+	return tea.Tick(frameInterval, func(now time.Time) tea.Msg { return FrameMsg{Time: now} })
 }
 
 func (m Model) selected() (domain.Device, bool) {
