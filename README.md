@@ -10,7 +10,7 @@ lantern combines three sources and merges them into one row per device:
 | Kernel neighbor cache (`/proc/net/arp`) | Hosts this machine has recently talked to | nothing |
 | mDNS / DNS-SD | Hostnames and services (printers, Chromecasts, AirPlay, SMB, SSH, HomeKit, ...) | nothing |
 
-Vendors come from the IEEE OUI registry, which is embedded in the binary. Randomized (locally administered) MACs, such
+Vendors come from the IEEE OUI registry, which is embedded in the binary. Randomized (locally administered) MACs, suchsdsdsad
 as phones using private Wi-Fi addresses, are labeled as such rather than shown as unknown.
 
 ## Usage
