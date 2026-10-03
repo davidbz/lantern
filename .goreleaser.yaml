@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Release pipeline: push a `v*` tag (see .github/workflows/release.yml). Local dry run: `make release-snapshot`.
+version: 2
+
+project_name: app
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - id: app
+    main: ./cmd/app
+    binary: app
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+# SBOMs for each archive (requires syft on PATH).
+sboms:
+  - artifacts: archive
+
+# Container image built with ko: no Dockerfile or Docker daemon needed in CI.
+kos:
+  - build: app
+    repositories:
+      - ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}
+    base_image: gcr.io/distroless/static-debian13:nonroot
+    platforms: [linux/amd64, linux/arm64]
+    tags:
+      - "{{ .Version }}"
+      - latest
+    bare: true
+    preserve_import_paths: false
+    sbom: spdx
+    labels:
+      org.opencontainers.image.source: "{{ .GitURL }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+
+# Keyless (OIDC) cosign signatures for the checksum file and images (requires cosign on PATH).
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - --bundle=${signature}
+      - ${artifact}
+      - --yes
+
+docker_signs:
+  - cmd: cosign
+    artifacts: manifests
+    args:
+      - sign
+      - ${artifact}
+      - --yes
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore\\(deps\\):"
+
+release:
+  draft: false
+  prerelease: auto

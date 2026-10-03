@@ -1,0 +1,51 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    labels: [dependencies, github-actions]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # Also bumps the `tool` directives (mockery, govulncheck, go-licenses).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, go]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: docker
+    directories: [/, /.devcontainer]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: devcontainers
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, devcontainers]
+    commit-message:
+      prefix: chore
+      include: scope

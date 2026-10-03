@@ -1,0 +1,11 @@
+# mockery v3 config: https://vektra.github.io/mockery/latest/configuration/
+# Run with `make mocks`; generated mocks are committed and verified in CI by `make mocks-check`.
+template: testify
+# Mock every interface in a registered package; narrow per package with `config: {all: false}` + `interfaces:`.
+all: true
+dir: internal/mocks
+pkgname: mocks
+filename: "{{.InterfaceName | snakecase}}.go"
+packages:
+  # Register each package whose interfaces need mocks, e.g.:
+  # github.com/davidbz/golang-template/internal/user:

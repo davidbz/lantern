@@ -1,0 +1,40 @@
+{
+	"$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
+	"name": "golang-template",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": ".."
+	},
+	"features": {
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+	},
+	"capAdd": [
+		"SYS_PTRACE"
+	],
+	"securityOpt": [
+		"seccomp=unconfined"
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go",
+				"github.vscode-github-actions",
+				"ms-azuretools.vscode-docker",
+				"EditorConfig.EditorConfig",
+				"Anthropic.claude-code",
+				"GitHub.copilot",
+				"eamodio.gitlens"
+			]
+		}
+	},
+	"containerEnv": {
+		"GOPATH": "/home/vscode/go",
+		"GOBIN": "/home/vscode/go/bin"
+	},
+	"postCreateCommand": "go mod download && go tool -n mockery >/dev/null",
+	"mounts": [
+		"source=code-bashhistory,target=/commandhistory,type=volume",
+		"source=claude-code-config,target=/home/vscode/.claude,type=volume"
+	],
+	"remoteUser": "vscode"
+}

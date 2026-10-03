@@ -1,0 +1,67 @@
+{
+    "editor.renderWhitespace": "trailing",
+    "editor.scrollBeyondLastLine": false,
+    "editor.minimap.enabled": true,
+    "editor.trimAutoWhitespace": true,
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    },
+    "files.insertFinalNewline": true,
+    "files.trimTrailingWhitespace": true,
+    "go.useLanguageServer": true,
+    "go.toolsManagement.autoUpdate": true,
+    "go.lintTool": "golangci-lint",
+    "go.lintOnSave": "workspace",
+    "go.lintFlags": [
+        "--path-mode=abs",
+        "--fast-only"
+    ],
+    "go.vetOnSave": "off",
+    "go.formatTool": "custom",
+    "go.alternateTools": {
+        "customFormatter": "golangci-lint"
+    },
+    "go.formatFlags": [
+        "fmt",
+        "--stdin"
+    ],
+    "go.testOnSave": false,
+    "go.coverOnSave": false,
+    "go.coverageDecorator": {
+        "type": "gutter"
+    },
+    "go.testFlags": [
+        "-v",
+        "-race"
+    ],
+    "go.testTimeout": "30s",
+    "go.buildTags": "",
+    "go.buildFlags": [],
+    "go.addTags": {
+        "tags": "json",
+        "options": "json=omitempty",
+        "promptForTags": false,
+        "transform": "snakecase"
+    },
+    "gopls": {
+        "ui.semanticTokens": true,
+        "ui.completion.usePlaceholders": true,
+        "ui.diagnostic.analyses": {
+            "unusedparams": true,
+            "shadow": false,
+            "nilness": true,
+            "unusedwrite": true
+        },
+        "formatting.gofumpt": true,
+        "formatting.local": "github.com/davidbz/golang-template"
+    },
+    "remote.localPortHost": "allInterfaces",
+    "remote.autoForwardPortsFallback": 0,
+    "files.exclude": {
+        "**/.git": true,
+        "**/.DS_Store": true,
+        "**/node_modules": true,
+        ".pytest_cache": true
+    }
+}
