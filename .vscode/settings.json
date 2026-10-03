@@ -54,7 +54,7 @@
             "unusedwrite": true
         },
         "formatting.gofumpt": true,
-        "formatting.local": "github.com/davidbz/golang-template"
+        "formatting.local": "github.com/davidbz/lantern"
     },
     "remote.localPortHost": "allInterfaces",
     "remote.autoForwardPortsFallback": 0,

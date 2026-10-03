@@ -1,52 +1,92 @@
-# golang-template
+# lantern
 
-An opinionated template for Go applications: Go 1.27, strict linting, reproducible tooling, a devcontainer,
-supply-chain-hardened CI, and signed releases.
+A terminal UI that finds the devices on your local network and tells you what they are.
 
-## What's included
+lantern combines three sources and merges them into one row per device:
 
-| Area | Tooling |
+| Source | What it finds | Needs |
+| --- | --- | --- |
+| Active ARP sweep | Every host that answers on each local IPv4 subnet (MAC + IP) | root or `CAP_NET_RAW` |
+| Kernel neighbor cache (`/proc/net/arp`) | Hosts this machine has recently talked to | nothing |
+| mDNS / DNS-SD | Hostnames and services (printers, Chromecasts, AirPlay, SMB, SSH, HomeKit, ...) | nothing |
+
+Vendors come from the IEEE OUI registry, which is embedded in the binary. Randomized (locally administered) MACs, such
+as phones using private Wi-Fi addresses, are labeled as such rather than shown as unknown.
+
+## Usage
+
+```bash
+make build
+sudo setcap cap_net_raw+ep bin/lantern   # once, so the ARP sweep works without sudo
+bin/lantern
+```
+
+Without raw-socket access, lantern still runs: it shows a banner and lists what the neighbor cache and mDNS found.
+
+| Key | Action |
 | --- | --- |
-| Toolchain | Go 1.27; `go.mod` is the single source of the Go version for CI, Docker and lint |
-| Project tools | mockery v3, govulncheck, go-licenses as `tool` directives in `go.mod` (`go tool <name>`) |
-| Lint & format | golangci-lint v2 (~80 linters, gofumpt/goimports/golines), see `.golangci.yml` |
-| Tests | testify + mockery, `-race -shuffle=on`, coverage |
-| Dev environment | Devcontainer (Debian trixie) with pinned gopls, dlv, golangci-lint, goreleaser; Docker via host socket |
-| CI | Build/test, tidy & mocks drift checks, golangci-lint, zizmor, TruffleHog, govulncheck (also weekly), license check |
-| Container | Multi-stage `Dockerfile` to `distroless/static:nonroot` |
-| Release | GoReleaser on `v*` tags: multi-platform archives, SBOMs, ko-built images on GHCR, cosign keyless signing, build provenance attestations |
-| Supply chain | Actions pinned by commit SHA, Dependabot (actions, gomod, docker, devcontainers) with grouping and a 7-day cooldown |
-| AI agents | `AGENTS.md` (`CLAUDE.md`/`GEMINI.md` symlink to it) and Copilot instructions in `.github/instructions/` |
+| `↑`/`↓` | Move |
+| `enter` / `esc` | Show / hide device details |
+| `s` | Cycle sort: IP, vendor, hostname, last seen |
+| `r` | Rescan now (the inventory also refreshes every 30s) |
+| `q` | Quit |
 
-## Using this template
+| Flag | Description |
+| --- | --- |
+| `--update-oui` | Download the latest IEEE registry to the user cache dir; later runs prefer it over the embedded copy |
+| `--version` | Print the version |
 
-1. Click **Use this template** on GitHub, then open the repo in the devcontainer.
-2. Replace the module path `github.com/davidbz/golang-template` in:
-   - `go.mod`
-   - `.golangci.yml` (`formatters.settings.goimports.local-prefixes`)
-   - `.vscode/settings.json` (`gopls.formatting.local`)
-3. Set `project_name` in `.goreleaser.yaml` and update `LICENSE`.
-4. Add your entry point at `cmd/app/main.go` (or `cmd/<name>/` and pass `CMD=./cmd/<name>` to make).
-   Declare `var version = "dev"` in `main` to receive the version stamped at build time.
-5. Register packages with interfaces to mock under `packages:` in `.mockery.yaml`.
-6. Run `make ci`.
+### Configuration
 
-Until there is Go code, the build, test and vulnerability targets skip with a message instead of failing.
+All settings are environment variables (a `.env` file in the working directory is also read):
 
-## Make targets
+| Variable | Default | Description |
+| --- | --- | --- |
+| `LANTERN_SCAN_TIMEOUT` | `8s` | Upper bound for one scan |
+| `LANTERN_ARP_REPLY_WAIT` | `2s` | How long to wait for ARP replies |
+| `LANTERN_ARP_SEND_INTERVAL` | `2ms` | Pause between ARP requests |
+| `LANTERN_ARP_MIN_PREFIX_BITS` | `22` | Subnets larger than this are narrowed around our own address |
+| `LANTERN_NEIGHBOR_TABLE` | `/proc/net/arp` | Kernel neighbor cache |
+| `LANTERN_MDNS_WAIT` | `3s` | How long to browse mDNS |
+| `LANTERN_MDNS_SERVICES` | common types | Comma-separated DNS-SD service types to browse |
+| `LANTERN_REFRESH_INTERVAL` | `30s` | Pause between automatic scans |
+| `LANTERN_OUI_CACHE` | `<user cache>/lantern/oui.csv` | Where `--update-oui` stores the registry |
+| `LANTERN_OUI_URL` | IEEE MA-L CSV | Registry source |
+| `LANTERN_LOG_FILE` | (none) | Log file; logs are discarded when unset, since stdout belongs to the UI |
+| `LANTERN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
-Run `make` (or `make help`) for the full list.
+## Design
+
+The code is data-oriented: `internal/domain` holds plain data (`Observation`, `Device`, `Inventory`) and pure
+functions over it (`Merge`, `ApplyVendors`, `SortedDevices`, `SweepTargets`). Services hold only interfaces and static
+config, and everything is wired with `go.uber.org/dig` in `cmd/lantern/main.go`.
+
+```
+netif ─┐                                 ┌─ arpscan  (active ARP sweep)
+       ├─> discovery.Service.Scan ──────┼─ neighbor (kernel cache)
+oui ───┘    Merge + ApplyVendors         └─ mdns     (DNS-SD browse)
+                     │
+                     v
+                    tui   (Bubble Tea; Update is a reducer over the inventory)
+```
+
+Each source implements `discovery.Source` and is registered in the `sources` dig group. To add a source, write an
+adapter and add one `Provide` line. Sources that cannot run on the current system (`ErrInsufficientPrivileges`,
+`ErrSourceUnavailable`) become warnings in the UI. Any other failure fails the scan.
+
+## Development
+
+Conventions for contributors and AI agents are in [AGENTS.md](AGENTS.md).
 
 | Target | Description |
 | --- | --- |
-| `build` / `run` | Build or run `$(CMD)` (default `./cmd/app`) |
+| `build` / `run` | Build or run `cmd/lantern` |
 | `test`, `test-coverage`, `test-coverage-html` | Tests with race detector and shuffle; coverage reports |
 | `mocks`, `mocks-regen`, `mocks-check` | Generate mocks; fail if committed mocks are stale |
 | `fmt`, `lint`, `lint-fix` | golangci-lint formatters and linters |
+| `oui` | Refresh the embedded IEEE vendor registry |
 | `vuln`, `licenses` | govulncheck; fail on forbidden/restricted dependency licenses |
 | `tidy`, `tidy-check` | `go mod tidy`; fail if not tidy |
-| `docker` | Build the container image |
-| `release-snapshot` | Local GoReleaser dry run into `dist/` |
 | `ci` | Everything CI checks |
 
 ## Releasing
@@ -57,25 +97,8 @@ Push a semver tag:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-`.github/workflows/release.yml` runs GoReleaser, which publishes archives, checksums and SBOMs to a GitHub release
-and images to `ghcr.io/<owner>/<project_name>`, signs them with cosign (keyless), and attests build provenance.
-Verify an image with:
-
-```bash
-cosign verify ghcr.io/<owner>/<project_name>:<version> \
-  --certificate-identity-regexp 'https://github.com/<owner>/<repo>/' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-gh attestation verify <archive> --repo <owner>/<repo>
-```
-
-## Updating versions
-
-Dependabot updates Go modules (including tools), actions, and base images. Two things need manual bumps:
-
-- **Go**: change the `go` line in `go.mod` and `run.go` in `.golangci.yml`; the Docker/devcontainer base image tags
-  follow via Dependabot.
-- **golangci-lint**: keep `.devcontainer/Dockerfile` (`GOLANGCI_LINT_VERSION`), `.github/workflows/lint.yml`
-  (`version`) and the comment in `.golangci.yml` on the same release.
+`.github/workflows/release.yml` runs GoReleaser. It publishes archives, checksums and SBOMs to a GitHub release, signs
+them with cosign (keyless), and attests build provenance.
 
 ## License
 

@@ -540,7 +540,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/davidbz/golang-template/internal/domain"
+	"github.com/davidbz/lantern/internal/domain"
 )
 
 // SailPointObserver implements the Observer interface

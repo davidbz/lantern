@@ -2,16 +2,16 @@
 # Release pipeline: push a `v*` tag (see .github/workflows/release.yml). Local dry run: `make release-snapshot`.
 version: 2
 
-project_name: app
+project_name: lantern
 
 before:
   hooks:
     - go mod tidy -diff
 
 builds:
-  - id: app
-    main: ./cmd/app
-    binary: app
+  - id: lantern
+    main: ./cmd/lantern
+    binary: lantern
     env:
       - CGO_ENABLED=0
     flags:
@@ -37,7 +37,7 @@ sboms:
 
 # Container image built with ko: no Dockerfile or Docker daemon needed in CI.
 kos:
-  - build: app
+  - build: lantern
     repositories:
       - ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/{{ .ProjectName }}
     base_image: gcr.io/distroless/static-debian13:nonroot

@@ -51,7 +51,7 @@ formatters:
       # Default: []
       # NOTE: update together with the module path in go.mod when creating a repo from this template.
       local-prefixes:
-        - github.com/davidbz/golang-template
+        - github.com/davidbz/lantern
 
     golines:
       # Target maximum line length.

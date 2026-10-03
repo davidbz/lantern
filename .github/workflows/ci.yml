@@ -57,5 +57,5 @@ jobs:
           persist-credentials: false
 
       - name: Build image
-        if: hashFiles('cmd/app/*.go') != ''
+        if: hashFiles('cmd/lantern/*.go') != ''
         run: make docker

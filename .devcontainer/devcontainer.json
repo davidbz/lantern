@@ -1,12 +1,9 @@
 {
 	"$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
-	"name": "golang-template",
+	"name": "lantern",
 	"build": {
 		"dockerfile": "Dockerfile",
 		"context": ".."
-	},
-	"features": {
-		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
 	},
 	"capAdd": [
 		"SYS_PTRACE"
