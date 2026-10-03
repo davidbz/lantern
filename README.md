@@ -89,17 +89,6 @@ Conventions for contributors and AI agents are in [AGENTS.md](AGENTS.md).
 | `tidy`, `tidy-check` | `go mod tidy`; fail if not tidy |
 | `ci` | Everything CI checks |
 
-## Releasing
-
-Push a semver tag:
-
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
-
-`.github/workflows/release.yml` runs GoReleaser. It publishes archives, checksums and SBOMs to a GitHub release, signs
-them with cosign (keyless), and attests build provenance.
-
 ## License
 
 [MIT](LICENSE)
