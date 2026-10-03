@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -17,62 +16,81 @@ import (
 
 // Column widths in cells. Services takes whatever width is left, but never less than its minimum.
 const (
+	rankWidth        = 5
 	ipWidth          = 18
 	macWidth         = 17
 	vendorWidth      = 26
 	hostnameWidth    = 26
 	minServicesWidth = 16
 	sourcesWidth     = 16
-	lastSeenWidth    = 9
+	lastSeenWidth    = 11
 	detailLabelWidth = 12
 	columnPadding    = 2 // cells the table adds around each column
-	columnCount      = 7
+	columnCount      = 8
 
 	minTableHeight = 3
-	// Lines around the table: title, footer and the table header with its border.
-	fixedChromeLines = 4
 
 	timeLayout  = "15:04:05"
 	placeholder = "-"
 	listSep     = ", "
+	sortMarker  = " ▼"
+	newMarker   = "★"
+	unknownName = "UNKNOWN"
 
-	colorAccent  = "39"
-	colorWarning = "214"
-	colorError   = "196"
-	colorMuted   = "245"
+	// Ordinal suffixes: 1ST, 2ND, 3RD, then TH, except 11TH to 13TH.
+	ordinalBase    = 10
+	ordinalCentury = 100
+	firstTeen      = 11
+	lastTeen       = 13
+	first          = 1
+	second         = 2
+	third          = 3
+
+	cardPaddingY = 0
+	cardPaddingX = 3
 )
 
-const privilegesHint = "Active ARP sweep disabled (needs raw sockets): run with sudo or " +
-	"`sudo setcap cap_net_raw+ep $(command -v lantern)`. Showing the neighbor cache and mDNS only."
-
-func newTable() table.Model {
-	styles := table.DefaultStyles()
-	styles.Header = styles.Header.Bold(true).BorderStyle(lipgloss.NormalBorder()).BorderBottom(true)
-	styles.Selected = styles.Selected.Foreground(lipgloss.Color(colorAccent)).Bold(true)
-
-	return table.New(table.WithColumns(columns(0)), table.WithFocused(true), table.WithStyles(styles))
+func newTable(ctx context.Context) table.Model {
+	return table.New(table.WithColumns(columns(ctx, 0, domain.SortByIP)), table.WithFocused(true),
+		table.WithStyles(tableStyles()))
 }
 
-func columns(width int) []table.Column {
-	fixed := ipWidth + macWidth + vendorWidth + hostnameWidth + sourcesWidth + lastSeenWidth
+// columns sizes the table for width and marks the column it is sorted by.
+func columns(ctx context.Context, width int, sortKey domain.SortKey) []table.Column {
+	fixed := rankWidth + ipWidth + macWidth + vendorWidth + hostnameWidth + sourcesWidth + lastSeenWidth
 	services := max(width-fixed-columnPadding*columnCount, minServicesWidth)
 
-	return []table.Column{
+	cols := []table.Column{
+		{Title: "RANK", Width: rankWidth},
 		{Title: "IP", Width: ipWidth},
 		{Title: "MAC", Width: macWidth},
-		{Title: "Vendor", Width: vendorWidth},
-		{Title: "Hostname", Width: hostnameWidth},
-		{Title: "Services", Width: services},
-		{Title: "Seen by", Width: sourcesWidth},
-		{Title: "Last seen", Width: lastSeenWidth},
+		{Title: "VENDOR", Width: vendorWidth},
+		{Title: "HOSTNAME", Width: hostnameWidth},
+		{Title: "SERVICES", Width: services},
+		{Title: "SEEN BY", Width: sourcesWidth},
+		{Title: "LAST SEEN", Width: lastSeenWidth},
 	}
+	sorted := strings.ToUpper(domain.SortKeyName(ctx, sortKey))
+	for i := range cols {
+		if cols[i].Title == sorted {
+			cols[i].Title += sortMarker
+		}
+	}
+
+	return cols
 }
 
-func rows(ctx context.Context, devices []domain.Device) []table.Row {
+// rows lists the devices; those first seen after since are starred as new arrivals.
+func rows(ctx context.Context, devices []domain.Device, since time.Time) []table.Row {
 	result := make([]table.Row, 0, len(devices))
 	for i := range devices {
 		device := &devices[i]
+		rank := ordinal(i + 1)
+		if !since.IsZero() && device.FirstSeen.After(since) {
+			rank += newMarker
+		}
 		result = append(result, table.Row{
+			rank,
 			ipSummary(device.IPs),
 			orPlaceholder(domain.FormatMAC(ctx, device.MAC)),
 			orPlaceholder(device.Vendor),
@@ -87,101 +105,129 @@ func rows(ctx context.Context, devices []domain.Device) []table.Row {
 }
 
 func render(ctx context.Context, m Model) string {
-	sections := []string{title(ctx, m)}
-	sections = append(sections, banners(m)...)
-
-	device, ok := m.selected()
-	if m.details && ok {
-		sections = append(sections, details(ctx, device))
-	}
-	if !m.details || !ok {
-		sections = append(sections, m.table.View())
-	}
-
-	sections = append(sections, footer())
+	sections := slices.Concat(chromeTop(m), []string{playfield(ctx, m)}, chromeBottom(m))
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
-func title(ctx context.Context, m Model) string {
-	name := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorAccent)).Render("lantern")
-	status := deviceCount(len(m.devices)) + " · sorted by " + domain.SortKeyName(ctx, m.sortKey)
-	if m.scanning {
-		return name + "  " + status + " · scanning…"
-	}
-
-	return name + "  " + status + " · last scan " + m.lastScan.Format(timeLayout)
+// chromeTop is everything above the playfield: header, rule and banners.
+func chromeTop(m Model) []string {
+	return append([]string{header(m), rule(m)}, banners(m)...)
 }
 
-// banners lists the scan error and each distinct warning, one line each.
-func banners(m Model) []string {
-	warn := lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarning)).Width(m.width)
-	fail := lipgloss.NewStyle().Foreground(lipgloss.Color(colorError)).Width(m.width)
-
-	var lines []string
-	if m.err != nil {
-		lines = append(lines, fail.Render("✗ Scan failed: "+m.err.Error()))
-	}
-	for _, text := range warningTexts(m.warnings) {
-		lines = append(lines, warn.Render("! "+text))
-	}
-
-	return lines
-}
-
-func warningTexts(warnings []error) []string {
-	var texts []string
-	for _, warning := range warnings {
-		text := warning.Error()
-		if errors.Is(warning, domain.ErrInsufficientPrivileges) {
-			text = privilegesHint
-		}
-		if slices.Contains(texts, text) {
-			continue
-		}
-		texts = append(texts, text)
-	}
-
-	return texts
-}
-
-func details(ctx context.Context, device domain.Device) string {
-	label := lipgloss.NewStyle().Bold(true).Width(detailLabelWidth)
-	fields := [][2]string{
-		{"IPs", strings.Join(addrStrings(device.IPs), listSep)},
-		{"MAC", orPlaceholder(domain.FormatMAC(ctx, device.MAC))},
-		{"Vendor", orPlaceholder(device.Vendor)},
-		{"Hostname", orPlaceholder(device.Hostname)},
-		{"Services", orPlaceholder(strings.Join(device.Services, listSep))},
-		{"Seen by", strings.Join(domain.SourceNames(ctx, device.Sources), listSep)},
-		{"First seen", device.FirstSeen.Format(time.DateTime)},
-		{"Last seen", device.LastSeen.Format(time.DateTime)},
-	}
-
-	lines := make([]string, 0, len(fields))
-	for _, field := range fields {
-		lines = append(lines, label.Render(field[0])+field[1])
-	}
-
-	return lipgloss.NewStyle().Padding(1, columnPadding).Render(strings.Join(lines, "\n"))
-}
-
-func footer() string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted)).
-		Render("↑/↓ move · enter details · s sort · r rescan · q quit")
+// chromeBottom is everything below the playfield: rule and footer.
+func chromeBottom(m Model) []string {
+	return []string{rule(m), footer(m)}
 }
 
 // chromeHeight is the number of lines around the table, so the table fills the rest of the window.
 func chromeHeight(m Model) int {
-	return fixedChromeLines + len(banners(m))
+	return lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, slices.Concat(chromeTop(m), chromeBottom(m))...))
 }
 
-func deviceCount(count int) string {
-	if count == 1 {
-		return "1 device"
+func playfield(ctx context.Context, m Model) string {
+	device, ok := m.selected()
+	if m.details && ok {
+		return details(ctx, m, device)
+	}
+	if len(m.devices) == 0 {
+		return splash(m)
 	}
 
-	return fmt.Sprintf("%d devices", count)
+	return m.table.View()
+}
+
+// details is the selected device's player card.
+func details(ctx context.Context, m Model, device domain.Device) string {
+	label := bold(colorCyan).Width(detailLabelWidth)
+	fields := [][2]string{
+		{"IPS", orPlaceholder(strings.Join(addrStrings(device.IPs), listSep))},
+		{"MAC", orPlaceholder(domain.FormatMAC(ctx, device.MAC))},
+		{"VENDOR", orPlaceholder(device.Vendor)},
+		{"HOSTNAME", orPlaceholder(device.Hostname)},
+		{"SERVICES", chips(device.Services)},
+		{"SEEN BY", lamps(ctx, device.Sources)},
+		{"FIRST SEEN", device.FirstSeen.Format(time.DateTime)},
+		{"LAST SEEN", device.LastSeen.Format(time.DateTime)},
+	}
+
+	lines := []string{
+		bold(colorMuted).Render(fmt.Sprintf("PLAYER %02d OF %02d", m.table.Cursor()+1, len(m.devices))),
+		bold(colorYellow).Render(displayName(ctx, device)),
+		fg(colorPurple).Render(orPlaceholder(device.Vendor)),
+		"",
+	}
+	for _, field := range fields {
+		lines = append(lines, label.Render(field[0])+field[1])
+	}
+
+	card := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(colorPink).
+		Padding(cardPaddingY, cardPaddingX).Render(strings.Join(lines, "\n"))
+
+	return lipgloss.Place(m.width, playfieldHeight(m), lipgloss.Center, lipgloss.Top, card)
+}
+
+// displayName is the most human name known for a device.
+func displayName(ctx context.Context, device domain.Device) string {
+	if device.Hostname != "" {
+		return device.Hostname
+	}
+	if len(device.IPs) > 0 {
+		return device.IPs[0].String()
+	}
+	if mac := domain.FormatMAC(ctx, device.MAC); mac != "" {
+		return mac
+	}
+
+	return unknownName
+}
+
+// chips renders each service as a badge.
+func chips(services []string) string {
+	if len(services) == 0 {
+		return placeholder
+	}
+
+	badges := make([]string, 0, len(services))
+	for _, service := range services {
+		badges = append(badges, bold(colorGreen).Render("["+service+"]"))
+	}
+
+	return strings.Join(badges, " ")
+}
+
+// lamps shows every source, lit when it saw the device.
+func lamps(ctx context.Context, sources domain.SourceKind) string {
+	seen := domain.SourceNames(ctx, sources)
+	all := domain.SourceNames(ctx, domain.SourceARP|domain.SourceNeighbor|domain.SourceMDNS)
+
+	result := make([]string, 0, len(all))
+	for _, name := range all {
+		lamp := fg(colorDim).Render("◇ " + strings.ToUpper(name))
+		if slices.Contains(seen, name) {
+			lamp = bold(colorGreen).Render("◆ " + strings.ToUpper(name))
+		}
+		result = append(result, lamp)
+	}
+
+	return strings.Join(result, "  ")
+}
+
+// ordinal renders a leaderboard rank: 1ST, 2ND, 3RD, 4TH, ...
+func ordinal(rank int) string {
+	suffix := "TH"
+	if teen := rank % ordinalCentury; teen < firstTeen || teen > lastTeen {
+		switch rank % ordinalBase {
+		case first:
+			suffix = "ST"
+		case second:
+			suffix = "ND"
+		case third:
+			suffix = "RD"
+		}
+	}
+
+	return fmt.Sprintf("%d%s", rank, suffix)
 }
 
 func ipSummary(ips []netip.Addr) string {
